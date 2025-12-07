@@ -35,18 +35,6 @@ RABIDS payloads are constructed with a multi-language approach to maximize flexi
 - **Core Logic (Nim):** The primary functionality of each module is written in Nim, a high-performance, statically-typed language that compiles to native C, C++, or JavaScript. This allows for fast, efficient, and dependency-free binaries.
 - **Windows Wrapper (Rust):** For Windows targets, the compiled Nim payload is embedded within a Rust-based loader. This loader is responsible for executing the Nim binary directly from memory (`memexec`), which can bypass some filesystem-based security controls. The Rust wrapper also handles the embedding of necessary DLLs and other files, ensuring the final executable is self-contained.
 
-## Available Modules
-
-- **`ctrlvamp`**: Hijacks clipboard crypto addresses (BTC, ETH, BEP-20, SOL).
-- **`dumpster`**: Collects files from a directory and archives them into a single file.
-- **`ghostintheshell`**: Provides a reverse shell over Discord for remote access.
-- **`krash`**: A ransomware module that encrypts files using AES and can report success via Discord.
-- **`poof`**: Recursively deletes all files and folders from a target directory.
-- **`undeleteme`**: Gains persistence and can add a Windows Defender exclusion.
-- **`bankruptsys`**: An ATM malware module designed to dispense cash by interacting with the XFS middleware.
-- **`winkrashv2`**: A stealthy ransomware module for Windows that uses direct syscalls for file operations to evade common API hooking.
-- **`byovf`**: "Bring Your Own File" - A flexible module that allows you to embed your own Nim code and secondary files (like drivers or DLLs) into the payload.
-
 ## Documentation & Setup
 
 All documentation, including detailed installation instructions, setup guides, and in-depth module descriptions, can be found within the application itself under the **"DOCUMENTATION" tab**.
