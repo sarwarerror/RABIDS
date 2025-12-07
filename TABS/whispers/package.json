@@ -1,0 +1,13 @@
+{
+    "name": "rabids-whatsapp-bridge",
+    "version": "1.0.0",
+    "description": "WhatsApp Web bridge for RABIDS Silent Whispers",
+    "main": "whatsapp_bridge.js",
+    "dependencies": {
+        "whatsapp-web.js": "^1.23.0",
+        "qrcode-terminal": "^0.12.0"
+    },
+    "scripts": {
+        "start": "node whatsapp_bridge.js"
+    }
+}

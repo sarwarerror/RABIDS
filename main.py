@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 import json
 from PyQt5.QtGui import QFont, QPixmap, QMovie, QIcon
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, QUrl
+from TABS.whispers.silentwhispers import SilentWhispersWidget
 
 ASCII = r"""                                                                                                                                                                                                                         
 """
@@ -230,6 +231,7 @@ class RABIDSGUI(QMainWindow):
         self.current_option_values = {}
         self.module_options_group = None
         self.loot_files_list = None
+        self.silent_whispers_widget = None
         self.init_ui()
         self.load_settings()
 
@@ -854,11 +856,15 @@ class RABIDSGUI(QMainWindow):
         settings_layout.addWidget(save_btn_container)
 
 
+        # Silent Whispers Tab
+        self.silent_whispers_widget = SilentWhispersWidget(self.script_dir)
+        
         self.tab_widget.addTab(builder_widget, "BUILDER")
         self.tab_widget.addTab(output_widget, "OUTPUT")
         self.tab_widget.addTab(c2_widget, "C2")
         self.tab_widget.addTab(uncrash_widget, "KRASH")
         self.tab_widget.addTab(garbage_collector_widget, "GARBAGE COLLECTOR")
+        self.tab_widget.addTab(self.silent_whispers_widget, "SILENT WHISPERS")
         self.tab_widget.addTab(docs_widget, "DOCUMENTATION")
         self.tab_widget.addTab(settings_widget, "SETTINGS")
         self.update_loot_folder_view()
@@ -1609,7 +1615,8 @@ class RABIDSGUI(QMainWindow):
             },
             "listener": {
                 "server_url": self.settings_server_url_edit.text()
-            }
+            },
+            "silent_whispers": self.silent_whispers_widget.get_settings() if self.silent_whispers_widget else {}
         }
         try:
             with open(self.get_config_path(), 'w') as f:
@@ -1649,6 +1656,11 @@ class RABIDSGUI(QMainWindow):
 
             listener_cfg = config.get("listener", {})
             self.settings_server_url_edit.setText(listener_cfg.get("server_url", "http://localhost:8080"))
+
+            # Load Silent Whispers settings
+            silent_whispers_cfg = config.get("silent_whispers", {})
+            if self.silent_whispers_widget and silent_whispers_cfg:
+                self.silent_whispers_widget.load_settings(silent_whispers_cfg)
 
         except (json.JSONDecodeError, KeyError) as e:
             print(f"Error loading settings from config file: {e}")
