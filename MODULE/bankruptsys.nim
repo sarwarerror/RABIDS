@@ -1,7 +1,7 @@
 import strutils, tables, os, dynlib, streams, osproc, sequtils, json
 
 when not defined(xfs):
-  import dimscord, asyncdispatch, times, options, httpclient, threadpool, random
+  import asyncdispatch, times, httpclient, threadpool, random
 
 when defined(windows):
   import winim/lean as winlean, winim/com
@@ -701,9 +701,7 @@ proc loadState(output: Stream) =
 
 when not defined(xfs):
   const
-    discordToken* = "YOUR_DISCORD_BOT_TOKEN"
-    creatorId* = "YOUR_DISCORD_USER_ID"
-  let discord = newDiscordClient(discordToken)
+    serverUrl* = "http://localhost:8080"
 
   var
     currentDir = getCurrentDir()

